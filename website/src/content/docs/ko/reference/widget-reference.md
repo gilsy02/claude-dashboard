@@ -144,9 +144,9 @@ sidebar:
 ### agentStatus
 
 - **ID**: `agentStatus`
-- **데이터 소스**: transcript (JSONL)
-- **표시 내용**: 활성 서브에이전트 수와 완료된 에이전트 수.
-- **출력 예시**: `🤖 Agent: 1 active ▸ 3 done`, `🤖 Agent: 2 done`
+- **데이터 소스**: transcript (JSONL) + 환경 변수
+- **표시 내용**: 실행 중인 서브에이전트(타입, 작업 설명)와 완료된 에이전트 수. 서브에이전트의 모델을 확인할 수 있으면 — Agent 툴 호출의 `model` 파라미터, 또는 내장 `general-purpose`/`claude` 타입에 적용되는 `CLAUDE_CODE_SUBAGENT_MODEL` (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`이면 `fork`/`Explore`를 제외한 모든 타입) — `Explore(Sonnet)`처럼 접미사로 표시합니다. 접미사가 없으면 메인 대화의 모델을 상속하거나 transcript만으로는 알 수 없는 경우입니다.
+- **출력 예시**: `🤖 Agent: Explore(Sonnet): Searching codebase +1`, `🤖 Agent: general-purpose(Opus): Research auth flow`, `Agent: 3 done`
 
 ### todoProgress
 
@@ -175,8 +175,16 @@ sidebar:
 
 - **ID**: `cacheHit`
 - **데이터 소스**: stdin (cache_read_input_tokens, 전체 입력)
-- **표시 내용**: 캐시에서 제공된 토큰의 비율. 높을수록 효율적입니다.
+- **표시 내용**: 마지막 API 요청에서 캐시로 제공된 입력 토큰의 비율. 높을수록 효율적입니다. 세션 전체 관점은 `promptCache`를 참고하세요.
 - **출력 예시**: `📦 85%`, `📦 42%`
+
+### promptCache
+
+- **ID**: `promptCache`
+- **프리셋 문자**: `c`
+- **데이터 소스**: stdin (`prompt_cache`, Claude Code 2.1.251 이상)
+- **표시 내용**: 메인 대화의 세션 전체 프롬프트 캐시 상태 — `/cost`의 `Prompt cache (main)` 줄과 같은 수치입니다. 🔥는 캐시된 prefix가 아직 TTL 안에 있음(warm), ❄️는 만료되어 다음 요청이 대화를 다시 캐시함(cold)을 뜻합니다. 퍼센트는 `hit_ratio`(세션 전체 입력 토큰 중 캐시 read 비율), `✗N`은 캐시 미스로 집계된 요청 수입니다. 첫 API 응답 전이거나 프로바이더/게이트웨이가 캐시 토큰을 보고하지 않으면(`caching_observed: false`) 숨겨집니다. 서브에이전트 요청은 집계에 포함되지 않습니다.
+- **출력 예시**: `🔥 91%`, `❄️ 91% ✗2`, `🔥`
 
 ### depletionTime
 

@@ -43,6 +43,7 @@ sidebar:
 | `m` | vimMode | `a` | apiDuration |
 | `p` | peakHours | `t` | tagStatus |
 | `b` | contextBar | `%` | contextPercentage |
+| `c` | promptCache | | |
 | `#` | contextUsage | `/` | slashCommand |
 | `g` | agentMode | `f` | rateLimit7dFable |
 | `^` | antigravityUsage | | |
@@ -76,7 +77,7 @@ sidebar:
 
 - **1줄:** model, context, cost, rateLimit5h, rateLimit7d
 - **2줄:** projectInfo, sessionId, sessionDuration, burnRate, todoProgress
-- **3줄:** configCounts, toolActivity, agentStatus, cacheHit, performance
+- **3줄:** configCounts, toolActivity, agentStatus, cacheHit, promptCache, performance
 - **4줄:** tokenBreakdown, forecast, budget
 - **5줄:** codexUsage, geminiUsage, antigravityUsage, linesChanged, outputStyle, version
 
