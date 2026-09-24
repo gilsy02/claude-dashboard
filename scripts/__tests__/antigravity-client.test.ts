@@ -58,6 +58,16 @@ function mockWinCred(blob: string, platform: NodeJS.Platform = 'win32') {
   return execFileMock;
 }
 
+/**
+ * Mock fs/promises so agy's token file (and settings.json) is missing
+ */
+function mockTokenFileMissing() {
+  vi.doMock('fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('fs/promises')>();
+    return { ...actual, stat: vi.fn().mockRejectedValue(new Error('ENOENT')) };
+  });
+}
+
 function tokenJson(expiry: string): string {
   return JSON.stringify({
     token: {
@@ -182,10 +192,7 @@ describe('antigravity-client', () => {
 
   describe('isAntigravityInstalled', () => {
     it('should return false when the token file is missing', async () => {
-      vi.doMock('fs/promises', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('fs/promises')>();
-        return { ...actual, stat: vi.fn().mockRejectedValue(new Error('ENOENT')) };
-      });
+      mockTokenFileMissing();
 
       const { isAntigravityInstalled } = await importClient();
       expect(await isAntigravityInstalled()).toBe(false);
@@ -199,11 +206,9 @@ describe('antigravity-client', () => {
     });
 
     it('should fall back to Credential Manager on Windows when the token file is missing', async () => {
-      vi.doMock('fs/promises', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('fs/promises')>();
-        return { ...actual, stat: vi.fn().mockRejectedValue(new Error('ENOENT')) };
-      });
+      mockTokenFileMissing();
       const execFileMock = mockWinCred(tokenJson(FUTURE_EXPIRY));
+      mockFileCache();
 
       const { isAntigravityInstalled } = await importClient();
       expect(await isAntigravityInstalled()).toBe(true);
@@ -211,11 +216,32 @@ describe('antigravity-client', () => {
       expect(execFileMock.mock.calls[0][0]).toBe('powershell.exe');
     });
 
-    it('should not consult Credential Manager off Windows', async () => {
-      vi.doMock('fs/promises', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('fs/promises')>();
-        return { ...actual, stat: vi.fn().mockRejectedValue(new Error('ENOENT')) };
+    it('should record a cross-process miss when Credential Manager has no entry', async () => {
+      mockTokenFileMissing();
+      mockWinCred('');
+      const saveSpy = mockFileCache();
+
+      const { isAntigravityInstalled } = await importClient();
+      expect(await isAntigravityInstalled()).toBe(false);
+      expect(saveSpy).toHaveBeenCalledWith('/tmp/antigravity-wincred-miss.json', true);
+    });
+
+    it('should skip the PowerShell spawn while a miss is cached', async () => {
+      mockTokenFileMissing();
+      const execFileMock = mockWinCred(tokenJson(FUTURE_EXPIRY));
+      mockFileCache({
+        loadFileCache: vi.fn().mockImplementation((cacheFile: string) =>
+          Promise.resolve(cacheFile.includes('antigravity-wincred-miss') ? { data: true, timestamp: Date.now() } : null)
+        ),
       });
+
+      const { isAntigravityInstalled } = await importClient();
+      expect(await isAntigravityInstalled()).toBe(false);
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('should not consult Credential Manager off Windows', async () => {
+      mockTokenFileMissing();
       const execFileMock = mockWinCred(tokenJson(FUTURE_EXPIRY), 'linux');
 
       const { isAntigravityInstalled } = await importClient();
@@ -227,20 +253,19 @@ describe('antigravity-client', () => {
   describe('fetchAntigravityUsage', () => {
     it('should fetch usage with credentials from Credential Manager when the token file is missing', async () => {
       // stat rejects for the token file, so settings.json is unreadable too -> model undefined
-      vi.doMock('fs/promises', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('fs/promises')>();
-        return { ...actual, stat: vi.fn().mockRejectedValue(new Error('ENOENT')) };
-      });
+      mockTokenFileMissing();
       const execFileMock = mockWinCred(tokenJson(FUTURE_EXPIRY));
       mockFileCache();
       const fetchMock = mockCloudFetch();
 
-      const { fetchAntigravityUsage } = await importClient();
+      const { isAntigravityInstalled, fetchAntigravityUsage } = await importClient();
+      // Same order as the widget: install check, then fetch
+      expect(await isAntigravityInstalled()).toBe(true);
       const result = await fetchAntigravityUsage();
 
       expect(result).not.toBeNull();
       expect(result?.buckets).toHaveLength(5);
-      // Credential Manager read once per process, not per call
+      // Install check and credential read share one PowerShell spawn
       expect(execFileMock).toHaveBeenCalledOnce();
       const authHeader = (fetchMock.mock.calls[0][1] as RequestInit | undefined)?.headers as Record<string, string>;
       expect(authHeader?.['Authorization']).toBe('Bearer ag-access');

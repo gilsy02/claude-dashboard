@@ -125,6 +125,7 @@ var CLEANABLE_PREFIXES = [
   "gemini-usage-",
   "antigravity-usage-",
   "antigravity-token-",
+  "antigravity-wincred-",
   "zai-usage-"
 ];
 var lastCleanupTime = 0;
@@ -1132,6 +1133,8 @@ var OAUTH_TOKEN_FILE = "antigravity-oauth-token";
 var SETTINGS_FILE2 = "settings.json";
 var WINCRED_TARGET = "gemini:antigravity";
 var WINCRED_TIMEOUT_MS = 3e3;
+var WINCRED_MISS_CACHE_FILE = "antigravity-wincred-miss.json";
+var WINCRED_MISS_TTL_SECONDS = 600;
 var CODE_ASSIST_ENDPOINT2 = "https://cloudcode-pa.googleapis.com";
 var CODE_ASSIST_API_VERSION2 = "v1internal";
 var CODE_ASSIST_METADATA = {
@@ -1148,6 +1151,7 @@ var antigravityCacheMap = /* @__PURE__ */ new Map();
 var inFlightFetch = null;
 var pendingRefreshRequests2 = /* @__PURE__ */ new Map();
 var installedCheck = null;
+var winCredRead = null;
 var cachedCredentials2 = null;
 var cachedSettings2 = null;
 function getTokenPath() {
@@ -1179,10 +1183,7 @@ if ([CredNative]::CredRead('${WINCRED_TARGET}', 1, 0, [ref]$p)) {
   [Console]::Out.Write([Text.Encoding]::UTF8.GetString($b))
 }
 `;
-function readWinCredToken() {
-  if (process.platform !== "win32") {
-    return Promise.resolve(null);
-  }
+function spawnCredRead() {
   return new Promise((resolve) => {
     execFile5(
       "powershell.exe",
@@ -1199,6 +1200,24 @@ function readWinCredToken() {
       }
     );
   });
+}
+function readWinCredToken() {
+  if (process.platform !== "win32") {
+    return Promise.resolve(null);
+  }
+  winCredRead ??= (async () => {
+    const missFile = fileCachePath(WINCRED_MISS_CACHE_FILE);
+    if (await loadFileCache(missFile, WINCRED_MISS_TTL_SECONDS)) {
+      debugLog("antigravity", "Credential Manager miss cached, skipping CredRead");
+      return null;
+    }
+    const raw = await spawnCredRead();
+    if (!raw) {
+      await saveFileCache(missFile, true);
+    }
+    return raw;
+  })();
+  return winCredRead;
 }
 function isAntigravityInstalled() {
   installedCheck ??= stat5(getTokenPath()).then(
@@ -1236,15 +1255,8 @@ async function getCredentialsFromFile3() {
     try {
       fileStat = await stat5(tokenPath);
     } catch {
-      if (cachedCredentials2) {
-        return cachedCredentials2.data;
-      }
       const raw = await readWinCredToken();
-      const data2 = raw ? parseCredentials(raw) : null;
-      if (data2) {
-        cachedCredentials2 = { data: data2, mtime: -1 };
-      }
-      return data2;
+      return raw ? parseCredentials(raw) : null;
     }
     if (cachedCredentials2 && cachedCredentials2.mtime === fileStat.mtimeMs) {
       return cachedCredentials2.data;

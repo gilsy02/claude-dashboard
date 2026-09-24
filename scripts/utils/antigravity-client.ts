@@ -32,6 +32,9 @@ const SETTINGS_FILE = 'settings.json';
 /** Windows agy keeps the token in Credential Manager under this generic-credential target */
 const WINCRED_TARGET = 'gemini:antigravity';
 const WINCRED_TIMEOUT_MS = 3000;
+/** Cross-process "no credential" marker — a fresh agy login shows up within this window */
+const WINCRED_MISS_CACHE_FILE = 'antigravity-wincred-miss.json';
+const WINCRED_MISS_TTL_SECONDS = 600;
 
 const CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 const CODE_ASSIST_API_VERSION = 'v1internal';
@@ -73,6 +76,11 @@ const pendingRefreshRequests: Map<string, Promise<AntigravityCredentials | null>
  * Memoized install check — the token file cannot appear mid-render
  */
 let installedCheck: Promise<boolean> | null = null;
+
+/**
+ * Memoized Windows Credential Manager read (see readWinCredToken)
+ */
+let winCredRead: Promise<string | null> | null = null;
 
 /**
  * Cached token-file credentials with mtime tracking
@@ -156,10 +164,7 @@ if ([CredNative]::CredRead('${WINCRED_TARGET}', 1, 0, [ref]$p)) {
 }
 `;
 
-function readWinCredToken(): Promise<string | null> {
-  if (process.platform !== 'win32') {
-    return Promise.resolve(null);
-  }
+function spawnCredRead(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       'powershell.exe',
@@ -176,6 +181,30 @@ function readWinCredToken(): Promise<string | null> {
       }
     );
   });
+}
+
+/**
+ * Memoized per process — the install check and the credential read share one
+ * PowerShell spawn. A miss is remembered cross-process so Windows users without
+ * agy don't pay a PowerShell + Add-Type startup on every render.
+ */
+function readWinCredToken(): Promise<string | null> {
+  if (process.platform !== 'win32') {
+    return Promise.resolve(null);
+  }
+  winCredRead ??= (async () => {
+    const missFile = fileCachePath(WINCRED_MISS_CACHE_FILE);
+    if (await loadFileCache<true>(missFile, WINCRED_MISS_TTL_SECONDS)) {
+      debugLog('antigravity', 'Credential Manager miss cached, skipping CredRead');
+      return null;
+    }
+    const raw = await spawnCredRead();
+    if (!raw) {
+      await saveFileCache(missFile, true);
+    }
+    return raw;
+  })();
+  return winCredRead;
 }
 
 /**
@@ -230,17 +259,9 @@ async function getCredentialsFromFile(): Promise<AntigravityCredentials | null> 
     try {
       fileStat = await stat(tokenPath);
     } catch {
-      // No token file: Windows agy stores it in Credential Manager instead.
-      // Renders spawn a fresh process, so an in-process cache is per render anyway.
-      if (cachedCredentials) {
-        return cachedCredentials.data;
-      }
+      // No token file: Windows agy stores it in Credential Manager instead
       const raw = await readWinCredToken();
-      const data = raw ? parseCredentials(raw) : null;
-      if (data) {
-        cachedCredentials = { data, mtime: -1 };
-      }
-      return data;
+      return raw ? parseCredentials(raw) : null;
     }
 
     // Use cached credentials if file hasn't changed
@@ -809,6 +830,7 @@ export function clearAntigravityCache(): void {
   pendingRefreshRequests.clear();
   inFlightFetch = null;
   installedCheck = null;
+  winCredRead = null;
   cachedCredentials = null;
   cachedSettings = null;
 }
